@@ -1,8 +1,13 @@
 // RPM thresholds
-const unsigned long GREEN_THRESHOLD = 5000;
+const unsigned long GREEN_THRESHOLD = 4900;
 const unsigned long YELLOW_THRESHOLD = 5500;
-const unsigned long RED_THRESHOLD = 6000;
+const unsigned long RED_THRESHOLD = 5900;
 const unsigned long FLASH_THRESHOLD = 6200;
+
+// How many cylinders?
+const unsigned int PULSE_PER_REV = 6;
+// used to average over the last X events - increase if not smooth
+const unsigned int HISTORY_LENGTH = 48;
 
 // GPIO pins
 const byte TACH_PIN = 2;                // D4
@@ -11,7 +16,7 @@ const byte YELLOW_PIN = 4;              // D2
 const byte RED_PIN = 5;                 // D1
 
 const unsigned long FLASH_PERIOD = 50;  // milliseconds
-const unsigned long HYSTERESIS = 50;    // rpm
+const unsigned long HYSTERESIS = 100;    // rpm
 
 // internals below
 unsigned long lastFlashEvent = 0;
@@ -24,6 +29,11 @@ const byte SL_YELLOW = 2;
 const byte SL_RED = 4;
 const byte SL_ALL_ON = 7;
 
+const unsigned long DEBOUNCE_USEC = 60000000 / PULSE_PER_REV / (FLASH_THRESHOLD * 2);
+
+unsigned long history[HISTORY_LENGTH];
+unsigned int historyPosition = 0;
+
 volatile unsigned long previousTach = 0;
 volatile unsigned long rpm = 0;
 
@@ -34,13 +44,13 @@ void setup() {
     tachBounce,
     RISING
   );
-  
+
   pinMode(GREEN_PIN, OUTPUT);
   pinMode(YELLOW_PIN, OUTPUT);
   pinMode(RED_PIN, OUTPUT);
-  
+
   startupFlashSequence();
-  
+
   Serial.begin(115200);
 }
 
@@ -48,16 +58,22 @@ void setup() {
 void tachBounce() {
   unsigned long current = micros();
   unsigned long period = current - previousTach;
-  // debounce signal i.e. ignore anything that looks like it's above 12000 RPM
-  if (period < 5000) {
+  // debounce signal i.e. ignore anything < DEBOUNCE_USEC
+  if (period < DEBOUNCE_USEC) {
     return;
   }
-  
-  if (period > 0) {
-    rpm = (1000000 / period) * 60;
-  } else {
-    rpm = 0;
+
+  history[historyPosition++ % HISTORY_LENGTH] = period;
+  unsigned long sum = 0;
+  for (int i = 0; i < HISTORY_LENGTH; i++) {
+    sum += history[i];
   }
+  
+  if (sum == 0) {
+    return;
+  }
+
+  rpm = 60000000 / PULSE_PER_REV / (sum / HISTORY_LENGTH);
   previousTach = current;
 }
 
@@ -86,18 +102,15 @@ void startupFlashSequence() {
 }
 
 void loop() {
-  // if we have not seen a tach event for more than a second
-  // the engine is probably off, force RPM to 0
-  if (micros() - previousTach > 1000000) {
-    rpm = 0;
-  }
-
   // constantly toggle flasher state
   if (millis() - lastFlashEvent > FLASH_PERIOD) {
     flashState = !flashState;
     lastFlashEvent = millis();
     // piggyback on this event timer to dump current RPM to serial port
+    Serial.print("RPM: ");
     Serial.println(rpm);
+    Serial.print("LIGHTS: ");
+    Serial.println(lightState);
   }
 
   if (rpm >= FLASH_THRESHOLD) {
