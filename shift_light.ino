@@ -62,6 +62,7 @@ void tachBounce() {
   if (period < DEBOUNCE_USEC) {
     return;
   }
+  previousTach = current;
 
   history[historyPosition++ % HISTORY_LENGTH] = period;
   unsigned long sum = 0;
@@ -74,7 +75,6 @@ void tachBounce() {
   }
 
   rpm = 60000000 / PULSE_PER_REV / (sum / HISTORY_LENGTH);
-  previousTach = current;
 }
 
 
